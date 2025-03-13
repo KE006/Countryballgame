@@ -248,6 +248,9 @@ class CountryballGame {
         setTimeout(() => {
             this.showControlsMessage();
         }, 1000);
+
+        // Add this method to ensure emojis display properly across all platforms
+        this.ensureEmojisDisplay();
     }
 
     setupWorld() {
@@ -3897,353 +3900,460 @@ class CountryballGame {
 
     // Initialize multiplayer functionality
     initMultiplayer() {
-        // Create multiplayer UI
-        this.createMultiplayerUI();
-        
-        // Initialize player data
-        this.playerId = null;
-        this.players = {};
+        // Initialize multiplayer state
         this.isMultiplayer = false;
         this.isHost = false;
+        this.gameCode = '';
+        this.players = {};
+        this.playerModels = {};
+        this.localPlayerId = null;
         
-        // Initialize WebSocket connection when joining a game
-        this.socket = null;
+        // Create multiplayer UI first
+        this.createMultiplayerUI();
+        
+        // Setup multiplayer UI
+        this.setupMultiplayerUI();
+        
+        // Setup WebRTC connection handling
+        this.setupWebRTC();
+        
+        // Setup periodic position updates
+        setInterval(() => {
+            if (this.isMultiplayer && this.connection && this.connection.open) {
+                this.sendPlayerPosition();
+            }
+        }, 50); // Send position updates 20 times per second
     }
 
-    // Create UI for multiplayer options
-    createMultiplayerUI() {
-        const panel = document.createElement('div');
-        panel.id = 'multiplayerPanel';
-        panel.style.position = 'fixed';
-        panel.style.top = '20px';
-        panel.style.right = '20px';
-        panel.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-        panel.style.padding = '10px';
-        panel.style.borderRadius = '5px';
-        panel.style.zIndex = '100';
+    setupMultiplayerUI() {
+        // Get references to multiplayer UI elements
+        this.hostButton = document.getElementById('hostGame');
+        this.joinButton = document.getElementById('joinGame');
+        this.gameCodeInput = document.getElementById('gameCode');
         
-        const title = document.createElement('div');
-        title.textContent = 'Multiplayer';
-        title.style.color = 'white';
-        title.style.fontWeight = 'bold';
-        title.style.marginBottom = '10px';
-        title.style.textAlign = 'center';
-        panel.appendChild(title);
+        // Add event listeners
+        this.hostButton.addEventListener('click', () => this.hostGame());
+        this.joinButton.addEventListener('click', () => this.joinGame());
         
-        // Host Game button
-        const hostButton = document.createElement('button');
-        hostButton.textContent = 'Host Game';
-        hostButton.style.padding = '8px';
-        hostButton.style.cursor = 'pointer';
-        hostButton.style.backgroundColor = '#4CAF50';
-        hostButton.style.border = 'none';
-        hostButton.style.borderRadius = '3px';
-        hostButton.style.color = 'white';
-        hostButton.style.width = '100%';
-        hostButton.style.marginBottom = '5px';
+        // Add player list to multiplayer panel
+        const multiplayerPanel = document.querySelector('.multiplayer-panel');
+        this.playerList = document.createElement('div');
+        this.playerList.className = 'player-list';
+        this.playerList.style.marginTop = '10px';
+        this.playerList.style.display = 'none';
+        multiplayerPanel.appendChild(this.playerList);
         
-        hostButton.addEventListener('click', () => {
-            this.hostGame();
+        // Add chat system
+        this.setupMultiplayerChat();
+    }
+
+    setupMultiplayerChat() {
+        // Create chat container
+        this.chatContainer = document.createElement('div');
+        this.chatContainer.className = 'chat-container';
+        this.chatContainer.style.position = 'fixed';
+        this.chatContainer.style.bottom = '10px';
+        this.chatContainer.style.right = '10px';
+        this.chatContainer.style.width = '300px';
+        this.chatContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+        this.chatContainer.style.borderRadius = '5px';
+        this.chatContainer.style.padding = '10px';
+        this.chatContainer.style.display = 'none';
+        this.chatContainer.style.zIndex = '1000';
+        
+        // Create chat messages area
+        this.chatMessages = document.createElement('div');
+        this.chatMessages.style.height = '200px';
+        this.chatMessages.style.overflowY = 'auto';
+        this.chatMessages.style.marginBottom = '10px';
+        this.chatMessages.style.color = 'white';
+        this.chatContainer.appendChild(this.chatMessages);
+        
+        // Create chat input
+        const chatInputContainer = document.createElement('div');
+        chatInputContainer.style.display = 'flex';
+        
+        this.chatInput = document.createElement('input');
+        this.chatInput.type = 'text';
+        this.chatInput.placeholder = 'Type a message...';
+        this.chatInput.style.flex = '1';
+        this.chatInput.style.padding = '5px';
+        this.chatInput.style.borderRadius = '3px 0 0 3px';
+        this.chatInput.style.border = 'none';
+        
+        const sendButton = document.createElement('button');
+        sendButton.textContent = 'Send';
+        sendButton.style.padding = '5px 10px';
+        sendButton.style.backgroundColor = '#4CAF50';
+        sendButton.style.color = 'white';
+        sendButton.style.border = 'none';
+        sendButton.style.borderRadius = '0 3px 3px 0';
+        sendButton.style.cursor = 'pointer';
+        
+        chatInputContainer.appendChild(this.chatInput);
+        chatInputContainer.appendChild(sendButton);
+        this.chatContainer.appendChild(chatInputContainer);
+        
+        document.body.appendChild(this.chatContainer);
+        
+        // Add event listeners
+        sendButton.addEventListener('click', () => this.sendChatMessage());
+        this.chatInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') this.sendChatMessage();
         });
         
-        panel.appendChild(hostButton);
-        
-        // Join Game section
-        const joinContainer = document.createElement('div');
-        joinContainer.style.marginBottom = '5px';
-        
-        const gameCodeInput = document.createElement('input');
-        gameCodeInput.type = 'text';
-        gameCodeInput.placeholder = 'Game Code';
-        gameCodeInput.style.padding = '8px';
-        gameCodeInput.style.width = '100%';
-        gameCodeInput.style.boxSizing = 'border-box';
-        gameCodeInput.style.marginBottom = '5px';
-        
-        const joinButton = document.createElement('button');
-        joinButton.textContent = 'Join Game';
-        joinButton.style.padding = '8px';
-        joinButton.style.cursor = 'pointer';
-        joinButton.style.backgroundColor = '#2196F3';
-        joinButton.style.border = 'none';
-        joinButton.style.borderRadius = '3px';
-        joinButton.style.color = 'white';
-        joinButton.style.width = '100%';
-        
-        joinButton.addEventListener('click', () => {
-            const gameCode = gameCodeInput.value.trim();
-            if (gameCode) {
-                this.joinGame(gameCode);
-            } else {
-                this.showMessage('Please enter a game code');
+        // Toggle chat with T key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 't' && this.isMultiplayer) {
+                this.chatContainer.style.display = 'block';
+                this.chatInput.focus();
             }
         });
         
-        joinContainer.appendChild(gameCodeInput);
-        joinContainer.appendChild(joinButton);
-        panel.appendChild(joinContainer);
-        
-        // Leave Game button (initially hidden)
-        const leaveButton = document.createElement('button');
-        leaveButton.textContent = 'Leave Game';
-        leaveButton.style.padding = '8px';
-        leaveButton.style.cursor = 'pointer';
-        leaveButton.style.backgroundColor = '#f44336';
-        leaveButton.style.border = 'none';
-        leaveButton.style.borderRadius = '3px';
-        leaveButton.style.color = 'white';
-        leaveButton.style.width = '100%';
-        leaveButton.style.display = 'none';
-        
-        leaveButton.addEventListener('click', () => {
-            this.leaveGame();
+        // Close chat when clicking outside or pressing Escape
+        document.addEventListener('click', (e) => {
+            if (!this.chatContainer.contains(e.target) && e.target !== this.chatInput) {
+                this.chatContainer.style.display = 'none';
+            }
         });
         
-        panel.appendChild(leaveButton);
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                this.chatContainer.style.display = 'none';
+            }
+        });
+    }
+
+    sendChatMessage() {
+        const message = this.chatInput.value.trim();
+        if (message && this.isMultiplayer && this.connection) {
+            // Add message to local chat
+            this.addChatMessage('You', message);
+            
+            // Send message to other players
+            this.connection.send({
+                type: 'chat',
+                sender: 'Player ' + this.localPlayerId,
+                message: message
+            });
+            
+            // Clear input
+            this.chatInput.value = '';
+        }
+    }
+
+    addChatMessage(sender, message) {
+        const messageElement = document.createElement('div');
+        messageElement.style.marginBottom = '5px';
         
-        // Game code display (initially hidden)
-        const gameCodeDisplay = document.createElement('div');
-        gameCodeDisplay.style.color = 'white';
-        gameCodeDisplay.style.textAlign = 'center';
-        gameCodeDisplay.style.marginTop = '10px';
-        gameCodeDisplay.style.display = 'none';
-        panel.appendChild(gameCodeDisplay);
+        const senderSpan = document.createElement('span');
+        senderSpan.textContent = sender + ': ';
+        senderSpan.style.fontWeight = 'bold';
+        senderSpan.style.color = sender === 'You' ? '#4CAF50' : '#2196F3';
         
-        // Player list (initially hidden)
-        const playerList = document.createElement('div');
-        playerList.style.color = 'white';
-        playerList.style.marginTop = '10px';
-        playerList.style.maxHeight = '100px';
-        playerList.style.overflowY = 'auto';
-        playerList.style.display = 'none';
-        panel.appendChild(playerList);
+        const messageSpan = document.createElement('span');
+        messageSpan.textContent = message;
         
-        document.body.appendChild(panel);
+        messageElement.appendChild(senderSpan);
+        messageElement.appendChild(messageSpan);
         
-        // Store references to UI elements
-        this.multiplayerUI = {
-            panel,
-            hostButton,
-            joinContainer,
-            leaveButton,
-            gameCodeDisplay,
-            playerList,
-            gameCodeInput
-        };
+        this.chatMessages.appendChild(messageElement);
+        this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+        
+        // Show chat container briefly for incoming messages
+        if (sender !== 'You') {
+            this.chatContainer.style.display = 'block';
+            setTimeout(() => {
+                if (document.activeElement !== this.chatInput) {
+                    this.chatContainer.style.display = 'none';
+                }
+            }, 5000);
+        }
     }
 
     // Host a new multiplayer game
     hostGame() {
-        if (this.isMultiplayer) {
-            this.showMessage('Already in a multiplayer game');
-            return;
-        }
+        this.isMultiplayer = true;
+        this.isHost = true;
         
-        // Generate a random game code
-        const gameCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+        // Generate a random 6-character game code
+        this.gameCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+        this.gameCodeInput.value = this.gameCode;
         
-        // Connect to WebSocket server
-        this.connectToServer(gameCode, true);
+        // Create a new peer
+        this.peer = new Peer();
         
-        // Update UI
-        this.showMessage(`Hosting game with code: ${gameCode}`);
-        this.updateMultiplayerUI(true, gameCode);
+        this.peer.on('open', (id) => {
+            this.localPlayerId = id;
+            console.log('Hosting game with ID:', id);
+            
+            // Add local player to players list
+            this.players[id] = {
+                id: id,
+                position: { x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z },
+                rotation: this.cameraAngle,
+                country: 'host', // Host uses a special country
+                name: 'Host'
+            };
+            
+            this.updatePlayerList();
+            this.showMessage(`Hosting game with code: ${this.gameCode}`);
+            
+            // Create player model for local player
+            this.createPlayerModel(id, 'host');
+        });
+        
+        this.peer.on('connection', (conn) => {
+            console.log('Player connected:', conn.peer);
+            
+            // Store connection
+            this.connections = this.connections || {};
+            this.connections[conn.peer] = conn;
+            
+            conn.on('open', () => {
+                // Send current game state to new player
+                conn.send({
+                    type: 'init',
+                    players: this.players,
+                    gameState: {
+                        // Add any game state you want to sync
+                        countryballs: this.getCountryballsState()
+                    }
+                });
+                
+                // Listen for data from this connection
+                conn.on('data', (data) => {
+                    this.handleMultiplayerData(data, conn.peer);
+                });
+            });
+            
+            conn.on('close', () => {
+                this.handlePlayerDisconnect(conn.peer);
+            });
+        });
     }
 
     // Join an existing multiplayer game
-    joinGame(gameCode) {
-        if (this.isMultiplayer) {
-            this.showMessage('Already in a multiplayer game');
+    joinGame() {
+        const code = this.gameCodeInput.value.trim().toUpperCase();
+        if (!code) {
+            this.showMessage('Please enter a game code');
             return;
         }
-        
-        // Connect to WebSocket server
-        this.connectToServer(gameCode, false);
-        
-        // Update UI
-        this.showMessage(`Joining game with code: ${gameCode}`);
-        this.updateMultiplayerUI(true, gameCode);
-    }
-
-    // Leave the current multiplayer game
-    leaveGame() {
-        if (!this.isMultiplayer) {
-            return;
-        }
-        
-        // Close WebSocket connection
-        if (this.socket) {
-            this.socket.close();
-            this.socket = null;
-        }
-        
-        // Remove other players from the scene
-        this.removeOtherPlayers();
-        
-        // Reset multiplayer state
-        this.isMultiplayer = false;
-        this.isHost = false;
-        this.playerId = null;
-        this.players = {};
-        
-        // Update UI
-        this.showMessage('Left multiplayer game');
-        this.updateMultiplayerUI(false);
-    }
-
-    // Connect to WebSocket server
-    connectToServer(gameCode, isHost) {
-        // Use a WebSocket server URL (you'll need to set up a server)
-        const serverUrl = 'wss://your-websocket-server.com';
-        
-        try {
-            // For development/testing, we'll simulate WebSocket with a mock implementation
-            if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
-                this.setupMockWebSocket(gameCode, isHost);
-                return;
-            }
-            
-            this.socket = new WebSocket(serverUrl);
-            
-            this.socket.onopen = () => {
-                // Send join message with game code
-                this.socket.send(JSON.stringify({
-                    type: 'join',
-                    gameCode: gameCode,
-                    isHost: isHost
-                }));
-                
-                this.isMultiplayer = true;
-                this.isHost = isHost;
-            };
-            
-            this.socket.onmessage = (event) => {
-                this.handleServerMessage(JSON.parse(event.data));
-            };
-            
-            this.socket.onclose = () => {
-                if (this.isMultiplayer) {
-                    this.showMessage('Disconnected from server');
-                    this.leaveGame();
-                }
-            };
-            
-            this.socket.onerror = (error) => {
-                console.error('WebSocket error:', error);
-                this.showMessage('Error connecting to server');
-                this.leaveGame();
-            };
-        } catch (error) {
-            console.error('Failed to connect to WebSocket server:', error);
-            this.showMessage('Failed to connect to server');
-        }
-    }
-
-    // For development/testing: mock WebSocket implementation
-    setupMockWebSocket(gameCode, isHost) {
-        // Create a mock socket object
-        this.socket = {
-            send: (data) => {
-                console.log('Mock WebSocket sending:', data);
-                // Simulate server response after a short delay
-                setTimeout(() => {
-                    const message = JSON.parse(data);
-                    
-                    if (message.type === 'join') {
-                        // Simulate server assigning a player ID
-                        this.handleServerMessage({
-                            type: 'joined',
-                            playerId: 'player_' + Math.random().toString(36).substring(2, 9),
-                            gameCode: gameCode,
-                            isHost: isHost
-                        });
-                        
-                        // If not host, simulate another player already in the game
-                        if (!isHost) {
-                            this.handleServerMessage({
-                                type: 'playerJoined',
-                                playerId: 'host_' + Math.random().toString(36).substring(2, 9),
-                                position: { x: 5, y: 0, z: 5 },
-                                rotation: 0
-                            });
-                        }
-                    }
-                    else if (message.type === 'position') {
-                        // No need to simulate anything for position updates in mock mode
-                    }
-                }, 500);
-            },
-            close: () => {
-                console.log('Mock WebSocket closed');
-            }
-        };
         
         this.isMultiplayer = true;
-        this.isHost = isHost;
+        this.isHost = false;
+        this.gameCode = code;
+        
+        // Create a new peer
+        this.peer = new Peer();
+        
+        this.peer.on('open', (id) => {
+            this.localPlayerId = id;
+            console.log('Joining game with ID:', id);
+            
+            // Connect to host
+            this.connection = this.peer.connect(this.gameCode);
+            
+            this.connection.on('open', () => {
+                console.log('Connected to host');
+                this.showMessage('Connected to game!');
+                
+                // Send player info to host
+                this.connection.send({
+                    type: 'join',
+                    id: id,
+                    position: { x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z },
+                    rotation: this.cameraAngle,
+                    country: 'guest', // Guests use a different country
+                    name: 'Player ' + id.substring(0, 4)
+                });
+                
+                // Listen for data from host
+                this.connection.on('data', (data) => {
+                    this.handleMultiplayerData(data, this.connection.peer);
+                });
+            });
+            
+            this.connection.on('close', () => {
+                this.showMessage('Disconnected from host');
+                this.resetMultiplayer();
+            });
+        });
     }
 
-    // Handle messages from the server
-    handleServerMessage(message) {
-        switch (message.type) {
-            case 'joined':
-                // Successfully joined the game
-                this.playerId = message.playerId;
-                this.showMessage(`Connected to game as ${message.isHost ? 'host' : 'player'}`);
-                break;
+    // Handle data received from other players
+    handleMultiplayerData(data, senderId) {
+        switch(data.type) {
+            case 'init':
+                // Initialize game state from host
+                this.players = data.players;
                 
-            case 'playerJoined':
-                // Another player joined the game
-                if (message.playerId !== this.playerId) {
-                    this.addOtherPlayer(message.playerId, message.position, message.rotation);
-                    this.showMessage('A new player has joined');
-                    this.updatePlayerList();
+                // Create player models for existing players
+                for (const playerId in this.players) {
+                    if (playerId !== this.localPlayerId && !this.playerModels[playerId]) {
+                        this.createPlayerModel(playerId, this.players[playerId].country);
+                    }
+                }
+                
+                // Update player list
+                this.updatePlayerList();
+                
+                // Update countryballs state
+                if (data.gameState && data.gameState.countryballs) {
+                    this.updateCountryballsState(data.gameState.countryballs);
                 }
                 break;
                 
-            case 'playerLeft':
-                // A player left the game
-                if (message.playerId !== this.playerId) {
-                    this.removePlayer(message.playerId);
-                    this.showMessage('A player has left');
-                    this.updatePlayerList();
+            case 'join':
+                // New player joined
+                if (this.isHost) {
+                    // Add new player to players list
+                    this.players[data.id] = {
+                        id: data.id,
+                        position: data.position,
+                        rotation: data.rotation,
+                        country: data.country,
+                        name: data.name
+                    };
+                    
+                    // Create player model for new player
+                    this.createPlayerModel(data.id, data.country);
+                    
+                    // Update all players with new player list
+                    this.broadcastToAllPlayers({
+                        type: 'playerList',
+                        players: this.players
+                    });
+                    
+                    // Show message
+                    this.showMessage(`${data.name} joined the game`);
+                    this.addChatMessage('System', `${data.name} joined the game`);
                 }
                 break;
                 
-            case 'playerPosition':
-                // Update another player's position
-                if (message.playerId !== this.playerId && this.players[message.playerId]) {
-                    this.updatePlayerPosition(
-                        message.playerId, 
-                        message.position, 
-                        message.rotation
-                    );
+            case 'playerList':
+                // Update player list from host
+                this.players = data.players;
+                
+                // Create player models for new players
+                for (const playerId in this.players) {
+                    if (playerId !== this.localPlayerId && !this.playerModels[playerId]) {
+                        this.createPlayerModel(playerId, this.players[playerId].country);
+                    }
+                }
+                
+                // Update player list UI
+                this.updatePlayerList();
+                break;
+                
+            case 'position':
+                // Update player position
+                if (this.players[senderId]) {
+                    this.players[senderId].position = data.position;
+                    this.players[senderId].rotation = data.rotation;
+                    
+                    // Update player model position
+                    if (this.playerModels[senderId]) {
+                        this.playerModels[senderId].position.set(
+                            data.position.x,
+                            data.position.y,
+                            data.position.z
+                        );
+                        this.playerModels[senderId].rotation.y = data.rotation;
+                    }
                 }
                 break;
                 
-            case 'gameState':
-                // Full game state update (received when joining)
-                this.syncGameState(message.state);
+            case 'chat':
+                // Handle chat message
+                this.addChatMessage(data.sender, data.message);
                 break;
                 
-            case 'error':
-                // Error message from server
-                this.showMessage(`Error: ${message.message}`);
+            case 'disconnect':
+                // Player disconnected
+                this.handlePlayerDisconnect(data.id);
                 break;
         }
     }
 
-    // Add another player to the scene
-    addOtherPlayer(playerId, position, rotation) {
-        // Create a player avatar (using a simple countryball)
-        const geometry = new THREE.SphereGeometry(0.5, 32, 32);
-        const material = new THREE.MeshBasicMaterial({ color: this.getPlayerColor(playerId) });
-        const playerMesh = new THREE.Mesh(geometry, material);
+    // Send player position to other players
+    sendPlayerPosition() {
+        const data = {
+            type: 'position',
+            position: {
+                x: this.camera.position.x,
+                y: this.camera.position.y,
+                z: this.camera.position.z
+            },
+            rotation: this.cameraAngle
+        };
         
-        // Position the player
-        playerMesh.position.set(
-            position.x || 0,
-            position.y || this.playerHeight,
-            position.z || 0
+        if (this.isHost) {
+            // Host broadcasts to all connected players
+            this.broadcastToAllPlayers(data);
+        } else if (this.connection) {
+            // Guest sends to host
+            this.connection.send(data);
+        }
+    }
+
+    // Broadcast data to all connected players
+    broadcastToAllPlayers(data) {
+        if (this.connections) {
+            for (const peerId in this.connections) {
+                if (this.connections[peerId].open) {
+                    this.connections[peerId].send(data);
+                }
+            }
+        }
+    }
+
+    // Handle player disconnect
+    handlePlayerDisconnect(playerId) {
+        if (this.players[playerId]) {
+            const playerName = this.players[playerId].name;
+            
+            // Remove player model
+            if (this.playerModels[playerId]) {
+                this.scene.remove(this.playerModels[playerId]);
+                delete this.playerModels[playerId];
+            }
+            
+            // Remove player from list
+            delete this.players[playerId];
+            
+            // Update player list
+            this.updatePlayerList();
+            
+            // Show message
+            this.showMessage(`${playerName} left the game`);
+            this.addChatMessage('System', `${playerName} left the game`);
+            
+            // If host, broadcast updated player list
+            if (this.isHost) {
+                this.broadcastToAllPlayers({
+                    type: 'playerList',
+                    players: this.players
+                });
+            }
+        }
+    }
+
+    // Create a 3D model for a player
+    createPlayerModel(playerId, country) {
+        // Create a countryball for the player
+        const geometry = new THREE.SphereGeometry(0.5, 32, 32);
+        
+        // Use country flag color or default
+        const color = this.getCountryFlagColor(country) || 0xCCCCCC;
+        const material = new THREE.MeshStandardMaterial({ color: color });
+        
+        const playerModel = new THREE.Mesh(geometry, material);
+        playerModel.position.set(
+            this.players[playerId].position.x,
+            this.players[playerId].position.y || this.playerHeight,
+            this.players[playerId].position.z
         );
         
         // Add eyes to make it look like a countryball
@@ -4258,189 +4368,169 @@ class CountryballGame {
         rightEye.position.set(0.2, 0.1, 0.4);
         rightEye.lookAt(0, 0, 1);
         
-        playerMesh.add(leftEye);
-        playerMesh.add(rightEye);
+        playerModel.add(leftEye);
+        playerModel.add(rightEye);
         
-        // Set rotation
-        playerMesh.rotation.y = rotation || 0;
+        // Add name tag
+        const canvas = document.createElement('canvas');
+        canvas.width = 256;
+        canvas.height = 64;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.font = '24px Arial';
+        ctx.fillStyle = 'white';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(this.players[playerId].name || `Player ${playerId.substring(0, 4)}`, canvas.width / 2, canvas.height / 2);
+        
+        const texture = new THREE.CanvasTexture(canvas);
+        const material2 = new THREE.MeshBasicMaterial({
+            map: texture,
+            transparent: true,
+            side: THREE.DoubleSide
+        });
+        
+        // Create name tag mesh
+        const geometry2 = new THREE.PlaneGeometry(2, 0.5);
+        const nameTag = new THREE.Mesh(geometry2, material2);
+        nameTag.position.y = 1.2;
+        nameTag.rotation.x = -Math.PI / 6;
+        
+        playerModel.add(nameTag);
         
         // Add to scene
-        this.scene.add(playerMesh);
+        this.scene.add(playerModel);
         
-        // Store player data
-        this.players[playerId] = {
-            mesh: playerMesh,
-            position: new THREE.Vector3(position.x || 0, position.y || this.playerHeight, position.z || 0),
-            rotation: rotation || 0
-        };
+        // Store reference
+        this.playerModels[playerId] = playerModel;
         
-        // Update player list in UI
-        this.updatePlayerList();
+        return playerModel;
     }
 
-    // Remove a player from the scene
-    removePlayer(playerId) {
-        if (this.players[playerId]) {
-            this.scene.remove(this.players[playerId].mesh);
-            delete this.players[playerId];
-        }
-    }
-
-    // Remove all other players from the scene
-    removeOtherPlayers() {
-        Object.keys(this.players).forEach(playerId => {
-            this.scene.remove(this.players[playerId].mesh);
+    // Add a name tag above a player model
+    addPlayerNameTag(playerModel, name) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 256;
+        canvas.height = 64;
+        const ctx = canvas.getContext('2d');
+        
+        // Draw background
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(0, 0, 256, 64);
+        
+        // Draw text
+        ctx.fillStyle = 'white';
+        ctx.font = 'bold 32px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(name, 128, 32);
+        
+        // Create texture
+        const texture = new THREE.CanvasTexture(canvas);
+        const material = new THREE.MeshBasicMaterial({
+            map: texture,
+            transparent: true,
+            side: THREE.DoubleSide
         });
-        this.players = {};
-    }
-
-    // Update another player's position and rotation
-    updatePlayerPosition(playerId, position, rotation) {
-        const player = this.players[playerId];
-        if (player) {
-            // Update position with smooth interpolation
-            player.targetPosition = new THREE.Vector3(position.x, position.y, position.z);
-            player.targetRotation = rotation;
-            
-            // If this is the first update, set position immediately
-            if (!player.lastUpdateTime) {
-                player.mesh.position.copy(player.targetPosition);
-                player.mesh.rotation.y = player.targetRotation;
-            }
-            
-            player.lastUpdateTime = Date.now();
-        }
-    }
-
-    // Get a consistent color for a player based on their ID
-    getPlayerColor(playerId) {
-        // Simple hash function to generate a color from player ID
-        let hash = 0;
-        for (let i = 0; i < playerId.length; i++) {
-            hash = playerId.charCodeAt(i) + ((hash << 5) - hash);
-        }
         
-        // Convert to RGB color
-        const r = (hash & 0xFF0000) >> 16;
-        const g = (hash & 0x00FF00) >> 8;
-        const b = hash & 0x0000FF;
+        // Create name tag mesh
+        const geometry = new THREE.PlaneGeometry(2, 0.5);
+        const nameTag = new THREE.Mesh(geometry, material);
+        nameTag.position.y = 2;
+        nameTag.rotation.x = -Math.PI / 6;
         
-        return (r << 16) | (g << 8) | b;
+        playerModel.add(nameTag);
     }
 
-    // Update the multiplayer UI based on connection state
-    updateMultiplayerUI(isConnected, gameCode = null) {
-        if (isConnected) {
-            // Show connected UI
-            this.multiplayerUI.hostButton.style.display = 'none';
-            this.multiplayerUI.joinContainer.style.display = 'none';
-            this.multiplayerUI.leaveButton.style.display = 'block';
-            this.multiplayerUI.playerList.style.display = 'block';
-            
-            if (gameCode) {
-                this.multiplayerUI.gameCodeDisplay.textContent = `Game Code: ${gameCode}`;
-                this.multiplayerUI.gameCodeDisplay.style.display = 'block';
-            }
-        } else {
-            // Show disconnected UI
-            this.multiplayerUI.hostButton.style.display = 'block';
-            this.multiplayerUI.joinContainer.style.display = 'block';
-            this.multiplayerUI.leaveButton.style.display = 'none';
-            this.multiplayerUI.gameCodeDisplay.style.display = 'none';
-            this.multiplayerUI.playerList.style.display = 'none';
-            this.multiplayerUI.gameCodeInput.value = '';
-        }
-        
-        // Update player list
-        this.updatePlayerList();
-    }
-
-    // Update the player list in the UI
+    // Update the player list UI
     updatePlayerList() {
+        if (!this.playerList) return;
+        
+        // Clear current list
+        this.playerList.innerHTML = '';
+        
+        // Show player list if in multiplayer mode
+        this.playerList.style.display = this.isMultiplayer ? 'block' : 'none';
+        
         if (!this.isMultiplayer) return;
         
-        const playerList = this.multiplayerUI.playerList;
-        playerList.innerHTML = '<div style="font-weight: bold; margin-bottom: 5px;">Players:</div>';
+        // Add header
+        const header = document.createElement('div');
+        header.textContent = 'Players Online:';
+        header.style.fontWeight = 'bold';
+        header.style.marginBottom = '5px';
+        header.style.color = 'white';
+        this.playerList.appendChild(header);
         
-        // Add current player
-        const playerItem = document.createElement('div');
-        playerItem.textContent = `You${this.isHost ? ' (Host)' : ''}`;
-        playerList.appendChild(playerItem);
-        
-        // Add other players
-        Object.keys(this.players).forEach(playerId => {
+        // Add each player
+        for (const playerId in this.players) {
             const playerItem = document.createElement('div');
-            playerItem.textContent = `Player ${playerId.substring(0, 5)}`;
-            playerList.appendChild(playerItem);
-        });
+            playerItem.textContent = this.players[playerId].name;
+            playerItem.style.color = playerId === this.localPlayerId ? '#4CAF50' : 'white';
+            playerItem.style.padding = '2px 0';
+            this.playerList.appendChild(playerItem);
+        }
     }
 
-    // Send player position to server
-    sendPlayerPosition() {
-        if (!this.isMultiplayer || !this.socket) return;
+    // Reset multiplayer state
+    resetMultiplayer() {
+        this.isMultiplayer = false;
+        this.isHost = false;
+        this.gameCode = '';
         
-        // Only send updates at a reasonable rate (10 times per second)
-        const now = Date.now();
-        if (!this.lastPositionUpdate || now - this.lastPositionUpdate > 100) {
-            this.socket.send(JSON.stringify({
-                type: 'position',
+        // Remove all player models
+        for (const playerId in this.playerModels) {
+            this.scene.remove(this.playerModels[playerId]);
+        }
+        
+        this.players = {};
+        this.playerModels = {};
+        this.connections = {};
+        this.connection = null;
+        
+        if (this.peer) {
+            this.peer.destroy();
+            this.peer = null;
+        }
+        
+        // Update UI
+        this.updatePlayerList();
+        this.chatContainer.style.display = 'none';
+    }
+
+    // Get the current state of all countryballs
+    getCountryballsState() {
+        const state = [];
+        
+        this.countryballs.forEach(countryball => {
+            state.push({
+                country: countryball.userData.country,
                 position: {
-                    x: this.camera.position.x,
-                    y: this.camera.position.y,
-                    z: this.camera.position.z
+                    x: countryball.position.x,
+                    y: countryball.position.y,
+                    z: countryball.position.z
                 },
-                rotation: this.cameraAngle
-            }));
-            
-            this.lastPositionUpdate = now;
-        }
-    }
-
-    // Synchronize game state with server data
-    syncGameState(state) {
-        // Add all players from the state
-        if (state.players) {
-            Object.keys(state.players).forEach(playerId => {
-                if (playerId !== this.playerId) {
-                    const player = state.players[playerId];
-                    this.addOtherPlayer(playerId, player.position, player.rotation);
-                }
+                rotation: countryball.rotation.y
             });
-        }
+        });
         
-        // Sync other game state as needed
-        // (countryballs, toys, etc.)
+        return state;
     }
 
-    // Update player interpolation in animation loop
-    updateMultiplayerPlayers(delta) {
-        if (!this.isMultiplayer) return;
-        
-        // Interpolate other players' positions
-        Object.keys(this.players).forEach(playerId => {
-            const player = this.players[playerId];
-            if (player.targetPosition && player.lastUpdateTime) {
-                // Calculate interpolation factor
-                const timeSinceUpdate = Date.now() - player.lastUpdateTime;
-                const interpolationFactor = Math.min(timeSinceUpdate / 100, 1);
-                
-                // Interpolate position
-                player.mesh.position.lerp(player.targetPosition, interpolationFactor);
-                
-                // Interpolate rotation
-                if (player.targetRotation !== undefined) {
-                    const rotationDiff = player.targetRotation - player.mesh.rotation.y;
-                    // Handle rotation wrapping
-                    if (rotationDiff > Math.PI) player.mesh.rotation.y += 2 * Math.PI;
-                    if (rotationDiff < -Math.PI) player.mesh.rotation.y -= 2 * Math.PI;
-                    
-                    player.mesh.rotation.y += (player.targetRotation - player.mesh.rotation.y) * interpolationFactor;
-                }
+    // Update countryballs based on received state
+    updateCountryballsState(state) {
+        state.forEach((ballState, index) => {
+            if (index < this.countryballs.length) {
+                const countryball = this.countryballs[index];
+                countryball.position.set(
+                    ballState.position.x,
+                    ballState.position.y,
+                    ballState.position.z
+                );
+                countryball.rotation.y = ballState.rotation;
             }
         });
-        
-        // Send our position to the server
-        this.sendPlayerPosition();
     }
 
     // Add this method to the CountryballGame class
@@ -5243,6 +5333,643 @@ class CountryballGame {
         }
         
         return false;
+    }
+
+    // Improved WebRTC setup with better error handling
+    setupWebRTC() {
+        // Set up connection status indicator
+        this.createConnectionStatusIndicator();
+        
+        // Set up reconnection mechanism
+        this.reconnectAttempts = 0;
+        this.maxReconnectAttempts = 5;
+        this.reconnectDelay = 2000; // Start with 2 seconds
+        
+        // Set up error handling for PeerJS
+        this.peerErrorHandlers = {
+            'browser-incompatible': () => {
+                this.showMessage('Your browser does not support WebRTC. Please use a modern browser.');
+                this.updateConnectionStatus('error', 'Browser incompatible');
+            },
+            'disconnected': () => {
+                this.updateConnectionStatus('warning', 'Disconnected');
+                this.attemptReconnect();
+            },
+            'network': () => {
+                this.updateConnectionStatus('warning', 'Network issues');
+                this.attemptReconnect();
+            },
+            'peer-unavailable': () => {
+                this.updateConnectionStatus('error', 'Game not found');
+                this.showMessage('Game not found. Please check the game code and try again.');
+            },
+            'server-error': () => {
+                this.updateConnectionStatus('error', 'Server error');
+                this.showMessage('Server error. Please try again later.');
+            },
+            'socket-error': () => {
+                this.updateConnectionStatus('error', 'Connection error');
+                this.attemptReconnect();
+            },
+            'socket-closed': () => {
+                this.updateConnectionStatus('warning', 'Connection closed');
+                this.attemptReconnect();
+            },
+            'unavailable-id': () => {
+                // Generate a new ID if the current one is unavailable
+                if (this.peer) {
+                    this.peer.destroy();
+                }
+                this.peer = new Peer();
+                this.setupPeerEvents();
+            }
+        };
+    }
+
+    // Create a connection status indicator
+    createConnectionStatusIndicator() {
+        this.connectionStatus = document.createElement('div');
+        this.connectionStatus.style.position = 'fixed';
+        this.connectionStatus.style.bottom = '10px';
+        this.connectionStatus.style.left = '10px';
+        this.connectionStatus.style.padding = '5px 10px';
+        this.connectionStatus.style.borderRadius = '5px';
+        this.connectionStatus.style.color = 'white';
+        this.connectionStatus.style.fontSize = '14px';
+        this.connectionStatus.style.display = 'none';
+        this.connectionStatus.style.zIndex = '1000';
+        document.body.appendChild(this.connectionStatus);
+    }
+
+    // Update connection status indicator
+    updateConnectionStatus(status, message) {
+        if (!this.connectionStatus) return;
+        
+        this.connectionStatus.style.display = this.isMultiplayer ? 'block' : 'none';
+        
+        switch(status) {
+            case 'connected':
+                this.connectionStatus.style.backgroundColor = '#4CAF50';
+                this.connectionStatus.innerHTML = '🟢 Connected';
+                break;
+            case 'connecting':
+                this.connectionStatus.style.backgroundColor = '#2196F3';
+                this.connectionStatus.innerHTML = '🔵 Connecting...';
+                break;
+            case 'warning':
+                this.connectionStatus.style.backgroundColor = '#FF9800';
+                this.connectionStatus.innerHTML = '🟠 ' + message;
+                break;
+            case 'error':
+                this.connectionStatus.style.backgroundColor = '#F44336';
+                this.connectionStatus.innerHTML = '🔴 ' + message;
+                break;
+        }
+    }
+
+    // Attempt to reconnect to the server
+    attemptReconnect() {
+        if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+            this.showMessage('Failed to reconnect after multiple attempts. Please try again later.');
+            this.updateConnectionStatus('error', 'Connection failed');
+            this.resetMultiplayer();
+            return;
+        }
+        
+        this.reconnectAttempts++;
+        const delay = this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts - 1); // Exponential backoff
+        
+        this.updateConnectionStatus('warning', `Reconnecting (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
+        this.showMessage(`Connection lost. Reconnecting in ${Math.round(delay/1000)} seconds...`);
+        
+        setTimeout(() => {
+            if (!this.isMultiplayer) return;
+            
+            if (this.peer) {
+                this.peer.destroy();
+            }
+            
+            if (this.isHost) {
+                this.peer = new Peer();
+                this.setupPeerEvents();
+            } else if (this.gameCode) {
+                this.peer = new Peer();
+                this.setupPeerEvents();
+                
+                this.peer.on('open', (id) => {
+                    this.localPlayerId = id;
+                    this.connection = this.peer.connect(this.gameCode);
+                    this.setupConnectionEvents();
+                });
+            }
+        }, delay);
+    }
+
+    // Set up peer events
+    setupPeerEvents() {
+        if (!this.peer) return;
+        
+        this.peer.on('open', (id) => {
+            this.localPlayerId = id;
+            this.reconnectAttempts = 0; // Reset reconnect attempts on successful connection
+            this.updateConnectionStatus('connected', 'Connected');
+            
+            if (this.isHost) {
+                // Host-specific setup
+                this.gameCode = id.substring(0, 6).toUpperCase();
+                this.gameCodeInput.value = this.gameCode;
+                this.showMessage(`Hosting game with code: ${this.gameCode}`);
+                
+                // Add local player to players list
+                this.players[id] = {
+                    id: id,
+                    position: { x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z },
+                    rotation: this.cameraAngle,
+                    country: 'host',
+                    name: 'Host'
+                };
+                
+                this.updatePlayerList();
+            } else if (this.gameCode) {
+                // Guest-specific setup
+                this.connection = this.peer.connect(this.gameCode);
+                this.setupConnectionEvents();
+            }
+        });
+        
+        // Handle errors
+        this.peer.on('error', (err) => {
+            console.error('PeerJS error:', err);
+            
+            // Handle specific error types
+            const errorType = err.type;
+            if (this.peerErrorHandlers[errorType]) {
+                this.peerErrorHandlers[errorType]();
+            } else {
+                // Generic error handling
+                this.showMessage(`Connection error: ${err.message || errorType}`);
+                this.updateConnectionStatus('error', 'Error');
+            }
+        });
+        
+        // Handle disconnection
+        this.peer.on('disconnected', () => {
+            this.updateConnectionStatus('warning', 'Disconnected');
+            this.attemptReconnect();
+        });
+        
+        // Handle connection
+        this.peer.on('connection', (conn) => {
+            this.updateConnectionStatus('connected', 'Connected');
+            
+            // Store connection
+            this.connections = this.connections || {};
+            this.connections[conn.peer] = conn;
+            
+            this.setupConnectionEvents(conn);
+        });
+    }
+
+    // Set up connection events
+    setupConnectionEvents(conn) {
+        const connection = conn || this.connection;
+        if (!connection) return;
+        
+        connection.on('open', () => {
+            this.updateConnectionStatus('connected', 'Connected');
+            this.reconnectAttempts = 0; // Reset reconnect attempts
+            
+            if (this.isHost) {
+                // Send current game state to new player
+                connection.send({
+                    type: 'init',
+                    players: this.players,
+                    gameState: {
+                        countryballs: this.getCountryballsState()
+                    }
+                });
+            } else {
+                // Send player info to host
+                connection.send({
+                    type: 'join',
+                    id: this.localPlayerId,
+                    position: { x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z },
+                    rotation: this.cameraAngle,
+                    country: 'guest',
+                    name: 'Player ' + this.localPlayerId.substring(0, 4)
+                });
+                
+                this.showMessage('Connected to game!');
+            }
+            
+            // Listen for data
+            connection.on('data', (data) => {
+                this.handleMultiplayerData(data, connection.peer);
+            });
+        });
+        
+        connection.on('close', () => {
+            if (this.isHost) {
+                this.handlePlayerDisconnect(connection.peer);
+            } else {
+                this.showMessage('Disconnected from host');
+                this.updateConnectionStatus('warning', 'Disconnected');
+                this.attemptReconnect();
+            }
+        });
+        
+        connection.on('error', (err) => {
+            console.error('Connection error:', err);
+            this.showMessage(`Connection error: ${err.message || err}`);
+            this.updateConnectionStatus('error', 'Connection error');
+        });
+    }
+
+    // Improved hostGame method with fallback servers
+    hostGame() {
+        this.isMultiplayer = true;
+        this.isHost = true;
+        this.updateConnectionStatus('connecting', 'Connecting...');
+        
+        // Try to connect with multiple ICE servers for better connectivity
+        const peerOptions = {
+            config: {
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun1.l.google.com:19302' },
+                    { urls: 'stun:stun2.l.google.com:19302' },
+                    { urls: 'stun:stun3.l.google.com:19302' },
+                    { urls: 'stun:stun4.l.google.com:19302' }
+                ]
+            },
+            debug: 2 // Set to 0 for production
+        };
+        
+        this.peer = new Peer(peerOptions);
+        this.setupPeerEvents();
+    }
+
+    // Improved joinGame method with better error handling
+    joinGame() {
+        const code = this.gameCodeInput.value.trim().toUpperCase();
+        if (!code) {
+            this.showMessage('Please enter a game code');
+            return;
+        }
+        
+        this.isMultiplayer = true;
+        this.isHost = false;
+        this.gameCode = code;
+        this.updateConnectionStatus('connecting', 'Connecting...');
+        
+        // Try to connect with multiple ICE servers for better connectivity
+        const peerOptions = {
+            config: {
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun1.l.google.com:19302' },
+                    { urls: 'stun:stun2.l.google.com:19302' },
+                    { urls: 'stun:stun3.l.google.com:19302' },
+                    { urls: 'stun:stun4.l.google.com:19302' }
+                ]
+            },
+            debug: 2 // Set to 0 for production
+        };
+        
+        this.peer = new Peer(peerOptions);
+        this.setupPeerEvents();
+    }
+
+    // Add a leave game button
+    addLeaveGameButton() {
+        if (this.leaveGameButton) return;
+        
+        this.leaveGameButton = document.createElement('button');
+        this.leaveGameButton.textContent = 'Leave Game';
+        this.leaveGameButton.style.position = 'fixed';
+        this.leaveGameButton.style.bottom = '10px';
+        this.leaveGameButton.style.left = '50%';
+        this.leaveGameButton.style.transform = 'translateX(-50%)';
+        this.leaveGameButton.style.padding = '8px 15px';
+        this.leaveGameButton.style.backgroundColor = '#f44336';
+        this.leaveGameButton.style.color = 'white';
+        this.leaveGameButton.style.border = 'none';
+        this.leaveGameButton.style.borderRadius = '4px';
+        this.leaveGameButton.style.cursor = 'pointer';
+        this.leaveGameButton.style.display = 'none';
+        this.leaveGameButton.style.zIndex = '1000';
+        
+        this.leaveGameButton.addEventListener('click', () => {
+            this.resetMultiplayer();
+        });
+        
+        document.body.appendChild(this.leaveGameButton);
+    }
+
+    // Add this method to ensure emojis display properly across all platforms
+    ensureEmojisDisplay() {
+        // Create a utility function to convert emoji codes to actual emojis
+        this.emojiMap = {
+            // Meats
+            'meat': '🥩',
+            'beef': '🥩',
+            'chicken': '🍗',
+            'pork': '🥓',
+            'fish': '🐟',
+            'salmon': '🐠',
+            'shrimp': '🦐',
+            'crab': '🦀',
+            'lobster': '🦞',
+            'duck': '🦆',
+            'caviar': '🥄',
+            
+            // Vegetables
+            'potato': '🥔',
+            'carrot': '🥕',
+            'tomato': '🍅',
+            'onion': '🧅',
+            'garlic': '🧄',
+            'cabbage': '🥬',
+            'broccoli': '🥦',
+            'corn': '🌽',
+            'mushroom': '🍄',
+            'avocado': '🥑',
+            'tofu': '🧊',
+            'peas': '🟢',
+            'blueberry': '🫐',
+            
+            // Grains
+            'rice': '🍚',
+            'bread': '🍞',
+            'pasta': '🍝',
+            'noodles': '🍜',
+            'flour': '🌾',
+            
+            // Dairy
+            'milk': '🥛',
+            'cheese': '🧀',
+            'butter': '🧈',
+            'egg': '🥚',
+            
+            // Fruits
+            'apple': '🍎',
+            'banana': '🍌',
+            'orange': '🍊',
+            'lemon': '🍋',
+            'strawberry': '🍓',
+            'pineapple': '🍍',
+            
+            // Spices
+            'salt': '🧂',
+            'pepper': '🌶️',
+            'curry': '🍛',
+            'gochugaru': '🌶️',
+            'wasabi': '🥬',
+            'truffle': '🍄',
+            
+            // Sauces
+            'soy_sauce': '🍶',
+            'honey': '🍯',
+            'olive_oil': '🫒',
+            'gochujang': '🥫',
+            'sesame_oil': '🫗',
+            'fish_sauce': '🐟',
+            'maple_syrup': '🍁',
+            
+            // Other
+            'ice': '🧊',
+            'chocolate': '🍫',
+            'coconut': '🥥',
+            'seaweed': '🌿',
+            'sesame_seeds': '⚪',
+            'vodka': '🍾',
+            'gravy': '🥣',
+            
+            // Dishes
+            'sushi': '🍣',
+            'steak': '🥩',
+            'soup': '🍲',
+            'pizza': '🍕',
+            'sandwich': '🥪',
+            'pie': '🥧',
+            'smoothie': '🥤',
+            'pudding': '🍮',
+            'salad': '🥗',
+            'dumpling': '🥟',
+            'pancake': '🥞',
+            'fries': '🍟',
+            'tart': '🥧',
+            
+            // Status icons
+            'connected': '🟢',
+            'connecting': '🔵',
+            'warning': '🟠',
+            'error': '🔴'
+        };
+        
+        // Update all ingredient icons
+        for (const category in this.ingredientCategories) {
+            this.ingredientCategories[category].forEach(ingredient => {
+                if (this.emojiMap[ingredient.id]) {
+                    ingredient.icon = this.emojiMap[ingredient.id];
+                }
+            });
+        }
+        
+        // Update recipe icons
+        this.recipes.forEach(recipe => {
+            const mainIngredient = recipe.ingredients[0];
+            if (this.emojiMap[mainIngredient]) {
+                recipe.icon = this.emojiMap[mainIngredient];
+            }
+            
+            // Special cases for specific recipes
+            if (recipe.result.includes('Sushi')) recipe.icon = this.emojiMap['sushi'];
+            if (recipe.result.includes('Pizza')) recipe.icon = this.emojiMap['pizza'];
+            if (recipe.result.includes('Soup')) recipe.icon = this.emojiMap['soup'];
+            if (recipe.result.includes('Stew')) recipe.icon = this.emojiMap['soup'];
+        });
+        
+        // Create a fallback system using images for environments where emojis don't display
+        this.createEmojiImageFallbacks();
+    }
+
+    // Create image fallbacks for emojis
+    createEmojiImageFallbacks() {
+        this.emojiImages = {};
+        
+        // Function to create an emoji image element
+        const createEmojiImage = (emoji, name) => {
+            // Try to use a CDN that provides emoji images
+            const img = document.createElement('img');
+            img.src = `https://emojicdn.elk.sh/${encodeURIComponent(emoji)}?style=apple`;
+            img.alt = name;
+            img.style.width = '1.2em';
+            img.style.height = '1.2em';
+            img.style.verticalAlign = 'middle';
+            img.style.display = 'inline-block';
+            return img;
+        };
+        
+        // Create image elements for all emojis
+        for (const [key, emoji] of Object.entries(this.emojiMap)) {
+            this.emojiImages[key] = createEmojiImage(emoji, key);
+        }
+    }
+
+    // Helper function to get emoji (with fallback)
+    getEmoji(id, useImage = false) {
+        if (useImage && this.emojiImages && this.emojiImages[id]) {
+            return this.emojiImages[id].outerHTML;
+        }
+        return this.emojiMap[id] || id;
+    }
+
+    // Update the connection status indicator to use the emoji helper
+    updateConnectionStatus(status, message) {
+        if (!this.connectionStatus) return;
+        
+        this.connectionStatus.style.display = this.isMultiplayer ? 'block' : 'none';
+        
+        switch(status) {
+            case 'connected':
+                this.connectionStatus.style.backgroundColor = '#4CAF50';
+                this.connectionStatus.innerHTML = `${this.getEmoji('connected')} Connected`;
+                break;
+            case 'connecting':
+                this.connectionStatus.style.backgroundColor = '#2196F3';
+                this.connectionStatus.innerHTML = `${this.getEmoji('connecting')} Connecting...`;
+                break;
+            case 'warning':
+                this.connectionStatus.style.backgroundColor = '#FF9800';
+                this.connectionStatus.innerHTML = `${this.getEmoji('warning')} ${message}`;
+                break;
+            case 'error':
+                this.connectionStatus.style.backgroundColor = '#F44336';
+                this.connectionStatus.innerHTML = `${this.getEmoji('error')} ${message}`;
+                break;
+        }
+    }
+
+    // Create the multiplayer UI elements
+    createMultiplayerUI() {
+        // Create the multiplayer panel
+        const panel = document.createElement('div');
+        panel.className = 'multiplayer-panel';
+        panel.style.position = 'fixed';
+        panel.style.top = '20px';
+        panel.style.right = '20px';
+        panel.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+        panel.style.padding = '15px';
+        panel.style.borderRadius = '5px';
+        panel.style.color = 'white';
+        panel.style.zIndex = '1000';
+        panel.style.width = '250px';
+        
+        // Add title
+        const title = document.createElement('h3');
+        title.textContent = 'Multiplayer';
+        title.style.margin = '0 0 10px 0';
+        title.style.textAlign = 'center';
+        panel.appendChild(title);
+        
+        // Create host game button
+        this.hostButton = document.createElement('button');
+        this.hostButton.id = 'hostGame';
+        this.hostButton.textContent = 'Host Game';
+        this.hostButton.style.width = '100%';
+        this.hostButton.style.padding = '8px';
+        this.hostButton.style.marginBottom = '10px';
+        this.hostButton.style.backgroundColor = '#4CAF50';
+        this.hostButton.style.border = 'none';
+        this.hostButton.style.borderRadius = '4px';
+        this.hostButton.style.color = 'white';
+        this.hostButton.style.cursor = 'pointer';
+        panel.appendChild(this.hostButton);
+        
+        // Create game code input
+        this.gameCodeInput = document.createElement('input');
+        this.gameCodeInput.id = 'gameCode';
+        this.gameCodeInput.type = 'text';
+        this.gameCodeInput.placeholder = 'Enter Game Code';
+        this.gameCodeInput.style.width = '100%';
+        this.gameCodeInput.style.padding = '8px';
+        this.gameCodeInput.style.marginBottom = '10px';
+        this.gameCodeInput.style.boxSizing = 'border-box';
+        this.gameCodeInput.style.border = 'none';
+        this.gameCodeInput.style.borderRadius = '4px';
+        panel.appendChild(this.gameCodeInput);
+        
+        // Create join game button
+        this.joinButton = document.createElement('button');
+        this.joinButton.id = 'joinGame';
+        this.joinButton.textContent = 'Join Game';
+        this.joinButton.style.width = '100%';
+        this.joinButton.style.padding = '8px';
+        this.joinButton.style.backgroundColor = '#2196F3';
+        this.joinButton.style.border = 'none';
+        this.joinButton.style.borderRadius = '4px';
+        this.joinButton.style.color = 'white';
+        this.joinButton.style.cursor = 'pointer';
+        panel.appendChild(this.joinButton);
+        
+        // Add player list container (will be populated later)
+        this.playerList = document.createElement('div');
+        this.playerList.className = 'player-list';
+        this.playerList.style.marginTop = '15px';
+        this.playerList.style.display = 'none';
+        panel.appendChild(this.playerList);
+        
+        // Add to document
+        document.body.appendChild(panel);
+        
+        // Create leave game button
+        this.addLeaveGameButton();
+    }
+
+    // Add this method to update multiplayer players in the animation loop
+    updateMultiplayerPlayers(delta) {
+        if (!this.isMultiplayer) return;
+        
+        // Update player positions
+        for (const playerId in this.playerModels) {
+            if (playerId === this.localPlayerId) continue; // Skip local player
+            
+            const player = this.players[playerId];
+            const model = this.playerModels[playerId];
+            
+            if (player && model && player.position) {
+                // Smoothly interpolate to target position
+                const targetPosition = new THREE.Vector3(
+                    player.position.x,
+                    player.position.y,
+                    player.position.z
+                );
+                
+                // Interpolate position (smoother movement)
+                model.position.lerp(targetPosition, 0.1);
+                
+                // Interpolate rotation (smoother turning)
+                const targetRotation = player.rotation || 0;
+                const rotationDiff = targetRotation - model.rotation.y;
+                
+                // Handle rotation wrapping
+                if (rotationDiff > Math.PI) model.rotation.y += 2 * Math.PI;
+                if (rotationDiff < -Math.PI) model.rotation.y -= 2 * Math.PI;
+                
+                model.rotation.y += (targetRotation - model.rotation.y) * 0.1;
+            }
+        }
+        
+        // Send our position to other players
+        if (this.isMultiplayer && (this.connection || this.connections)) {
+            // Only send updates at a reasonable rate (10 times per second)
+            const now = Date.now();
+            if (!this.lastPositionUpdate || now - this.lastPositionUpdate > 100) {
+                this.sendPlayerPosition();
+                this.lastPositionUpdate = now;
+            }
+        }
     }
 }
 
